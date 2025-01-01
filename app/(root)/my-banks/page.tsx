@@ -8,6 +8,10 @@ const mybanks = async () => {
 
   
         const loggedIn = await getLoggedInUser();
+        if (!loggedIn) {
+            // Handle the case where the user is not logged in
+            return <div>User is not logged in</div>;
+        }
         const accounts = await getAccounts({ userId: loggedIn.$id })
     
        
@@ -25,7 +29,7 @@ const mybanks = async () => {
           <div className='flex flex-wrap gap-6'>
             {accounts && accounts.data.map((a: Account)=>(
               <BankCard 
-                key={accounts.id}
+                key={a.id}
                 account={a}
                 userName={loggedIn?.firstName}
               />

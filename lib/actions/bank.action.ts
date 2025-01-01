@@ -1,11 +1,8 @@
 'use server';
 import {
-  ACHClass,
+  
   CountryCode,
-  TransferAuthorizationCreateRequest,
-  TransferCreateRequest,
-  TransferNetwork,
-  TransferType,
+
 } from "plaid";
 
 import { plaidClient } from "../plaid";
@@ -20,8 +17,12 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
     // get banks from db
     const banks = await getBanks({ userId });
 
+    if (!banks) {
+      throw new Error("No banks found for the user.");
+    }
+
     const accounts = await Promise.all(
-      banks?.map(async (bank: Bank) => {
+      (banks as unknown as Bank[]).map(async (bank: Bank) => {
         // get each account info from plaid
         const accountsResponse = await plaidClient.accountsGet({
           access_token: bank.accessToken,
@@ -33,11 +34,15 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
           institutionId: accountsResponse.data.item.institution_id!,
         });
 
+        if (!institution) {
+          throw new Error("Institution not found.");
+        }
+
         const account = {
           id: accountData.account_id,
           availableBalance: accountData.balances.available!,
           currentBalance: accountData.balances.current!,
-          institutionId: institution.institution_id,
+          institutionId: institution?.institution_id ?? '',
           name: accountData.name,
           officialName: accountData.official_name,
           mask: accountData.mask!,
@@ -68,6 +73,10 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
     // get bank from db
     const bank = await getBank({ documentId: appwriteItemId });
 
+    if (!bank) {
+      throw new Error("Bank not found.");
+    }
+
     // get account info from plaid
     const accountsResponse = await plaidClient.accountsGet({
       access_token: bank.accessToken,
@@ -79,17 +88,20 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
       bankId: bank.$id,
     });
 
-    const transferTransactions = transferTransactionsData.documents.map(
-      (transferData: Transaction) => ({
-        id: transferData.$id,
-        name: transferData.name!,
-        amount: transferData.amount!,
-        date: transferData.$createdAt,
-        paymentChannel: transferData.channel,
-        category: transferData.category,
-        type: transferData.senderBankId === bank.$id ? "debit" : "credit",
-      })
-    );
+    const transferTransactions = transferTransactionsData?.documents.map(
+      (transferData) => {
+        const transaction = transferData as unknown as Transaction;
+        return {
+          id: transaction.$id,
+          name: transaction.name!,
+          amount: transaction.amount!,
+          date: transaction.$createdAt,
+          paymentChannel: transaction.channel,
+          category: transaction.category,
+          type: transaction.senderBankId === bank.$id ? "debit" : "credit",
+        };
+      }
+    ) || [];
 
     // get institution info from plaid
     const institution = await getInstitution({
@@ -100,6 +112,10 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
       accessToken: bank?.accessToken,
     }); 
     console.log(transactions);
+
+    if (!institution) {
+      throw new Error("Institution not found.");
+    }
 
     const account = {
       id: accountData.account_id,
@@ -115,7 +131,7 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
     };
 
     // sort transactions by date such that the most recent transaction is first
-      const allTransactions = [...transactions, ...transferTransactions].sort(
+      const allTransactions = [...(transactions || []), ...transferTransactions].sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
@@ -151,7 +167,18 @@ export const getTransactions = async ({
   accessToken,
 }: getTransactionsProps) => {
   let hasMore = true;
-  let transactions: any = [];
+  let transactions: Array<{
+    id: string;
+    name: string;
+    paymentChannel: string;
+    type: string;
+    accountId: string;
+    amount: number;
+    pending: boolean;
+    category: string;
+    date: string;
+    image: string | null;
+  }> = [];
 
   try {
     // Iterate through each page of new transaction updates for item
@@ -172,7 +199,7 @@ export const getTransactions = async ({
         pending: transaction.pending,
         category: transaction.category ? transaction.category[0] : "",
         date: transaction.date,
-        image: transaction.logo_url,
+        image: transaction.logo_url ?? null,
       }));
 
       hasMore = data.has_more;
